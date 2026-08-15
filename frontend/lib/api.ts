@@ -3,10 +3,16 @@
  *
  * Auth is server-managed session cookies (Rev 2 §I.1) -- credentials:
  * "include" on every call, no token handling here, nothing touches
- * localStorage. The API base URL is a public runtime config value, not a
- * secret.
+ * localStorage.
+ *
+ * API_BASE is deliberately empty: every call below hits a RELATIVE /api/...
+ * path on this frontend's own origin, which next.config.js rewrites
+ * server-side to the real backend (see the comment there). The browser never
+ * makes a cross-origin request, so the backend's session cookie behaves like
+ * an ordinary same-site cookie even though frontend and backend are two
+ * separate deployed services.
  */
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const API_BASE = "";
 
 export class ApiError extends Error {
   status: number;
