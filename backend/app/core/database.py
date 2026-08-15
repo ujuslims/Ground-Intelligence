@@ -1,34 +1,19 @@
-"""
-SQLAlchemy engine/session setup.
-
-One engine per process, built from settings.database_url. Tests override
-this via dependency_overrides (see tests/conftest.py) rather than mutating
-global state, so production code never has test-only branches in it.
-"""
-from collections.abc import Generator
-
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.core.config import get_settings
 
+settings = get_settings()
+
+engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, future=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
+
 
 class Base(DeclarativeBase):
-    """Shared declarative base for all ORM models."""
     pass
 
 
-def build_engine(database_url: str | None = None):
-    url = database_url or get_settings().database_url
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=connect_args, future=True)
-
-
-engine = build_engine()
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-
-
-def get_db() -> Generator[Session, None, None]:
+def get_db():
     db = SessionLocal()
     try:
         yield db

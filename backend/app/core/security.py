@@ -1,15 +1,10 @@
 """
-Password hashing and session-token helpers.
+Password hashing and session token generation.
 
-Session tokens: a random 256-bit token is generated, its SHA-256 hash is
-stored in user_sessions.token_hash, and only the raw token is placed in the
-cookie. This mirrors normal server-session hygiene (never store the
-usable secret; store a hash you can compare against) and means a database
-read alone can't be replayed as a valid session cookie.
+Rev 2 §I.1: password hashing via bcrypt; session identifiers are opaque random
+tokens (never JWTs the client could decode/trust), stored server-side.
 """
-import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
 
 from passlib.context import CryptContext
 
@@ -20,17 +15,9 @@ def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password, password_hash)
+def verify_password(plain_password: str, password_hash: str) -> bool:
+    return pwd_context.verify(plain_password, password_hash)
 
 
-def generate_session_token() -> str:
-    return secrets.token_urlsafe(32)
-
-
-def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def new_expiry(minutes: int) -> datetime:
-    return datetime.now(timezone.utc) + timedelta(minutes=minutes)
+def new_session_token() -> str:
+    return secrets.token_urlsafe(48)

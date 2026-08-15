@@ -1,31 +1,40 @@
-import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import String, ForeignKey, DateTime
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
-from app.models.base import TimestampMixin, UUIDPKMixin
+from app.models.common import gen_uuid, utcnow
 
 
-class Project(UUIDPKMixin, TimestampMixin, Base):
-    """
-    Central project object (Implementation Design Rev 1 §1.1, Data Model §2).
+class Organization(Base):
+    __tablename__ = "organizations"
 
-    Only the fields needed for Phase 1 (project management + RBAC scoping)
-    are populated here. Fields tied to later phases are NOT added
-    speculatively -- e.g. no investigation/report counts, no GIS bounding
-    box -- those belong to the dashboard aggregation built in Phase 2+.
-    """
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Client(Base):
+    __tablename__ = "clients"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    contact_info: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Project(Base):
+    """The single central organizational entity (PRD §3, §6)."""
     __tablename__ = "projects"
 
-    project_code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=False)
+    client_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("clients.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    client_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clients.id"), nullable=False)
-    project_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    project_code: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    description: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
-
-    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-
-    client: Mapped["Client"] = relationship(back_populates="projects")
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

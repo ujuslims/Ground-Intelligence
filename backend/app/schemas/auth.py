@@ -1,5 +1,3 @@
-import uuid
-
 from pydantic import BaseModel, ConfigDict, EmailStr
 
 
@@ -9,9 +7,8 @@ class LoginRequest(BaseModel):
 
 
 class UserOut(BaseModel):
-    id: uuid.UUID
-    email: str
-    name: str
-    status: str
-
     model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    full_name: str

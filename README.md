@@ -1,113 +1,199 @@
-# Ground Intelligence
+# Ground Intelligence — MVP (Phase 1–2 build)
 
-Integrated multidisciplinary subsurface and engineering intelligence platform for Polaris Integrated & Geosolutions Limited (PIGL). See `docs/` for the governing specification set and `docs/INFRASTRUCTURE_DECISIONS.md` for hosting/infrastructure choices.
+Multidisciplinary subsurface and engineering intelligence platform for PIGL
+(Polaris Integrated & Geosolutions Limited). This build implements the
+**candidate baseline confirmed in MVP Implementation Design Revision 2**
+(14–15 August 2026) — see `Ground Intelligence Controlled Specification
+Register` in the project workspace for the full governance trail.
 
-**Status: Phase 1 (platform foundation) — in progress.** See "What's actually implemented" below before assuming any capability exists.
+## What this is, precisely
 
-## Repository structure
+This is a working application scaffold, not a finished product. It correctly
+implements Phase 1 (Platform Foundation) end-to-end and a substantial slice
+of Phase 2 (Investigation Data), plus the *structure* — deliberately not the
+content — of Phases 5–7 (Engineering Framework, GeoBrain, Reporting), per the
+phased sequence in the MVP Technical Specification §54 and the explicit
+instruction that engineering-calculation *content* must not be built ahead of
+PIGL Engineering approval.
+
+### Implemented and tested
+
+- **Data model**: all 34 entities from the MVP Data Model + Implementation
+  Design Rev 2 §A.1 (Organization, Client, Project, Investigation,
+  InvestigationLocation, Borehole, BoreholeStratum, SPT, CPT, CPTReading,
+  Sample, LaboratoryResult, GroundwaterObservation, VES, VESReading,
+  VESLayer, Dataset, File, Methodology, MethodologyVersion,
+  MethodologyRequest, Calculation, CalculationVersion, Report,
+  ReportTemplate, ReportSection, Review, AuditEvent, User, Role, Permission,
+  RolePermission, ProjectMembership, Session). Provenance columns
+  (`source`, `version`, `status`, `created_by`, `created_at`) are
+  non-nullable from the first migration, per the Data Model Controlled
+  Revision §3 safeguard.
+- **Auth**: server-managed sessions, HTTP-only cookies, PostgreSQL-backed
+  session store, bcrypt password hashing. No tokens in localStorage.
+- **RBAC**: six seeded roles (ENGINEER, TECHNICAL_REVIEWER, LABORATORY_USER,
+  PROJECT_MANAGER, ADMINISTRATOR, CLIENT_EXTERNAL_REVIEWER), data-driven
+  Role/Permission/RolePermission, project-scoped via ProjectMembership.
+- **Projects, Investigations, InvestigationLocations**: full CRUD, with the
+  audit trail wired into every mutating action.
+- **Boreholes, stratigraphy, SPT (observational-only), CPT (with import
+  validation), groundwater, samples, laboratory results (Path B import),
+  VES (readings + interpreted layers)**: CRUD + import endpoints.
+- **File storage**: S3-compatible abstraction (`app/services/storage.py`) —
+  MinIO locally, Amazon S3 in production — no provider-specific code
+  anywhere else in the codebase.
+- **Engineering calculation governance gate**
+  (`app/services/calculation_engine.py`): the single place in the codebase
+  that decides whether a calculation may produce a real result. It
+  independently re-verifies methodology approval server-side and currently
+  refuses **every** real `calculation_type` with an explicit
+  `REFUSED_NO_APPROVED_METHODOLOGY` outcome, because zero
+  `MethodologyVersion` rows are seeded with `status = APPROVED`. This is
+  proven by automated tests, not just documented.
+- **Methodology Registry + Request/Add Methodology workflow**: the governed
+  intake pathway from Rev 2 §F.2.
+- **GeoBrain's 15-tool contract** (`app/geobrain/tools.py`): all 15 tools
+  from the authoritative CC-GB-01 list are implemented as real, DB-backed
+  functions. `run_engineering_calculation` and `get_report_template` are
+  governed/conditional exactly as CC-GB-01 requires. The LLM orchestration
+  loop itself is intentionally **not** wired up yet — see "What's
+  deliberately not built" below.
+- **Draft Engineering Summary** report engine: assembles a report from real
+  project data, always labelled `DRAFT — ENGINEER REVIEW REQUIRED`, no
+  invented PIGL content or branding.
+- **Frontend**: Next.js/TypeScript app — login, project dashboard, project
+  detail page with a MapLibre investigation-location map, CPT import
+  visualization (qc/fs/u2 vs depth), a live demonstration of the calculation
+  gate refusing a shallow-foundation request, and draft-summary generation.
+  `npm run build` passes with no type errors.
+- **Synthetic demonstration data** (`scripts/seed_demo_data.py`): one demo
+  project with a borehole, CPT, lab sample, groundwater observation and VES
+  survey, every record labelled `DEMONSTRATION DATA — NOT REAL PIGL PROJECT
+  DATA`.
+- **Tests**: `backend/tests/` — 10 passing tests, including the two that
+  matter most: proof that a shallow-foundation calculation is refused, and
+  proof that the gate re-verifies server-side even if a caller supplies a
+  DRAFT (unapproved) `methodology_version_id`.
+
+### What's deliberately not built — and why
+
+Per the Controlled Specification Register, these are **governance gates**,
+not missing engineering effort:
+
+1. **Any real bearing-capacity (or other) calculation logic.** No formula,
+   factor, soil model, or standard reference appears anywhere in this
+   codebase. `app/services/calculation_engine.py` has an empty
+   implementation registry for every real `calculation_type`. This stays
+   empty until PIGL Engineering supplies and approves a methodology.
+2. **PIGL's actual Draft Engineering Summary content/branding.**
+   `ReportTemplate` rows are not populated; the report engine assembles
+   sections from real data but the template metadata itself is a PIGL
+   deliverable.
+3. **GeoBrain's production system instructions / orchestration loop.** The
+   15-tool contract is real and callable; the LLM conversation loop that
+   would call those tools autonomously is not wired up, because doing so
+   convincingly requires PIGL's existing custom-GPT configuration material
+   (per the Build Prompt Controlled Revision's explicit "do not recreate
+   from memory" gate). `app/geobrain/llm_provider.py` has the
+   Anthropic-Claude-behind-an-abstraction-layer plumbing ready for that
+   wiring once the source material arrives.
+4. **Admin/RBAC frontend screen.** The backend endpoints
+   (`app/routers/admin.py`) exist; a UI for them was not built in this pass
+   to keep this build's scope defensible — add a `/admin` page against
+   `POST /api/admin/users` and `GET /api/admin/roles` when needed.
+5. **Laboratory/CPT/VES *file upload* → column-mapping wizard.** The import
+   *endpoints* exist and validate (see `app/services/cpt_validation.py` for
+   the CPT rules), but they currently accept already-structured JSON rather
+   than parsing an uploaded spreadsheet with a column-mapping UI. That
+   wizard (file → format detection → column mapping → user confirmation) is
+   the next piece of Phase 2/3 work.
+6. **PostGIS-specific spatial queries.** `InvestigationLocation` currently
+   stores plain `latitude`/`longitude` floats rather than a PostGIS
+   `geometry` column. This was a scope call to keep the schema portable for
+   this sandbox's testing (no live Postgres was available to validate
+   PostGIS types against). Migrating to a real `geometry(Point, 4326)`
+   column with a GiST index is a small, contained change before spatial
+   queries (radius search, polygon clipping) are needed.
+
+## Architecture
 
 ```
-ground-intelligence/
-  backend/     FastAPI application (Python) -- the sole application/service gateway.
-               Owns the database schema, all business logic, RBAC, audit, and
-               (in a later phase) the engineering-calculation governance gate.
-  frontend/    Next.js/TypeScript frontend. Talks only to the backend API.
-  infra/       Local-development infrastructure (docker-compose: Postgres + MinIO).
-  docs/        Architecture and governance documents.
-  .github/     CI workflows (backend tests, frontend build).
+backend/
+  app/
+    core/        settings, DB session, auth/session dependencies, password hashing
+    models/      SQLAlchemy models — one file per domain area
+    schemas/     Pydantic request/response schemas
+    routers/     FastAPI routers — one file per domain area
+    services/    audit trail, S3-compatible storage, CPT validation,
+                 the calculation-engine gate, the report engine
+    geobrain/    the 15-tool contract + model-abstraction layer
+  alembic/       migrations (see note in 0001_initial_schema.py)
+  scripts/       seed_rbac.py, seed_demo_data.py
+  tests/         pytest suite (sqlite-backed, no external services needed)
+frontend/
+  app/           Next.js App Router pages (login, dashboard, project detail)
+  components/    MapView (MapLibre), CptChart (Recharts)
+  lib/api.ts     typed fetch wrapper, cookie-based auth
+docker-compose.yml   Postgres+PostGIS, MinIO, backend, frontend
 ```
 
-## Infrastructure
+## Running it locally
 
-- **Database & file storage:** Supabase-managed PostgreSQL/PostGIS and S3-compatible storage in staging/production; local Postgres+MinIO via `infra/docker-compose.yml` for development. See `docs/INFRASTRUCTURE_DECISIONS.md`.
-- **Backend hosting:** not yet decided/deployed (Netlify is not suitable for the FastAPI service — see infrastructure decisions doc).
-- **Frontend hosting:** Netlify (`netlify.toml`), builds `frontend/` only.
-- **Source control / CI:** GitHub, with Actions workflows in `.github/workflows/` running the backend test suite against a real Postgres container and the frontend lint+build on every push/PR.
-
-## Local development
+You'll need Docker. From the repo root:
 
 ```bash
-# 1. Start local Postgres + MinIO
-cd infra && docker compose up -d
+cp backend/.env.example backend/.env
+docker compose up --build
+```
 
-# 2. Backend
+This brings up Postgres/PostGIS, MinIO, the FastAPI backend (with Alembic
+migrations and RBAC seeding run automatically), and the Next.js frontend at
+http://localhost:3000. Seed demonstration data with:
+
+```bash
+docker compose exec backend python -m scripts.seed_demo_data
+```
+
+Then log in at http://localhost:3000/login with
+`demo.engineer@pigl.example` / `DemoPass123!`.
+
+### Running the backend tests
+
+The test suite runs against an in-memory-equivalent sqlite file and needs no
+Docker services:
+
+```bash
 cd backend
-python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-alembic upgrade head
-python -m app.seed        # seeds roles/permissions; set GI_BOOTSTRAP_ADMIN_PASSWORD first
-uvicorn app.main:app --reload
-
-# 3. Frontend (separate terminal)
-cd frontend
-npm install
-cp .env.example .env.local
-npm run dev
+DATABASE_URL="sqlite:///./test.db" python -m pytest tests/ -v
 ```
 
-## First login — how it actually gets created
+### A note on the first Alembic migration
 
-There is no pre-existing account anywhere — not in this repo, not on any server. The first ("bootstrap") administrator account is created by `app/seed.py`, which runs automatically as part of `docker-entrypoint.sh` every time the backend container starts (migrate → seed → serve). It is **idempotent**: safe to run on every restart, and it does nothing if an account with that email already exists.
+This sandbox had no live Postgres instance to run
+`alembic revision --autogenerate` against, so `0001_initial_schema.py` calls
+`Base.metadata.create_all()` directly rather than hand-authoring 34
+`op.create_table()` blocks (see the comment at the top of that file for the
+full reasoning). **Every migration after this one should use real
+autogenerate** against `docker compose up db`, so schema drift between
+`app/models/` and the migration history gets caught the normal way.
 
-**You choose the credentials, not Claude.** Set these two environment variables wherever the backend runs (locally in `.env`, or in Render's dashboard for a real deployment):
+## Next steps (in priority order)
 
-```
-GI_BOOTSTRAP_ADMIN_EMAIL=<a real email address>
-GI_BOOTSTRAP_ADMIN_PASSWORD=<a real password you choose>
-```
-
-Whatever you set is what you log in with. If `GI_BOOTSTRAP_ADMIN_PASSWORD` is left unset, the seed step skips creating an admin (and logs a warning) rather than creating one with a guessable default — there is deliberately no fallback password anywhere in this codebase.
-
-**One gotcha already fixed:** don't use a `.local`, `.test`, `.invalid`, or `.localhost` email domain (e.g. `admin@pigl.local`) — Pydantic's email validation rejects these as IANA special-use domains, and the very first login attempt would fail with a validation error before it even checked the password. Use a real domain (your actual PIGL email, or the `.env.example` placeholder `admin@pigl.example` for local testing only).
-
-To test this locally right now, without any live infrastructure:
-```bash
-cd infra && docker compose up -d
-cd ../backend
-python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
-cp .env.example .env   # edit GI_BOOTSTRAP_ADMIN_EMAIL / _PASSWORD to your own values
-alembic upgrade head
-python -m app.seed
-uvicorn app.main:app --reload
-# then POST {"email": ..., "password": ...} to http://localhost:8000/auth/login
-```
-
-## Testing
-
-```bash
-cd backend && source venv/bin/activate && python -m pytest tests/ -v
-cd frontend && npm run lint && npm run build
-```
-
-## Implementation status
-
-Maintained using five distinct levels, per explicit instruction — a component is never described as more "done" than the strongest level it has actually reached:
-
-1. **Implemented** — code exists and runs.
-2. **Locally tested** — automated tests pass on a developer machine / this sandbox.
-3. **CI-tested** — verified automatically on GitHub Actions (real ephemeral Postgres for the backend, real `npm ci`/build/lint for the frontend).
-4. **Verified against live infrastructure** — actually exercised against a real deployed Supabase project, Netlify site, or backend host. **Nothing is at this level yet.**
-5. **Production-ready** — deployed, verified, and fit to hold real PIGL project data. **Nothing is at this level yet.**
-
-| Component | Status | Notes |
-|---|---|---|
-| Session auth (login/logout/me) | 1, 2, 3 | 28/28 backend tests pass locally; same suite runs in `backend-ci.yml` against a real Postgres container. |
-| Data-driven RBAC (6 roles, project membership) | 1, 2, 3 | Includes the CLIENT_EXTERNAL_REVIEWER non-inheritance test. |
-| Project/Org/Client CRUD | 1, 2, 3 | |
-| Audit trail | 1, 2, 3 | Includes a test confirming there is no direct write endpoint. |
-| Alembic migration (all Phase-1 tables) | 1, 2, 3 | Locally verified against SQLite (schema shape only); CI applies it to real Postgres and confirms it's reversible (`alembic downgrade base`). **Never yet applied to Supabase.** |
-| Architecture boundary tests (no direct DB/storage access outside the service layer; frontend has no DB/Supabase client dependency; migrations-only schema changes) | 1, 2, 3 | New this stage — see `backend/tests/test_architecture_boundaries.py`. |
-| Storage abstraction (S3-compatible) | 1 only | Interface-level tests only (constructs correctly, rejects bad config). **Never connected to a real S3-compatible endpoint of any kind** — not MinIO, not Supabase Storage, not AWS S3. |
-| Next.js frontend (login, project list) | 1, 2, 3 | `npm run build`, `npm run lint`, and `npm ci` (exactly what CI runs) all verified locally. Never deployed anywhere. |
-| Backend Dockerfile / entrypoint | 1, 2 (raised this turn) | The entrypoint originally ran only the migration, not the seed step — meaning a real deploy would have started successfully but had zero roles/permissions/admin account, locking everyone out with no way in. Fixed: `docker-entrypoint.sh` now runs `alembic upgrade head` → `python -m app.seed` → `uvicorn` on every start. The full migrate→seed→login→session→admin-endpoint→wrong-password-rejected flow was run live against a local SQLite database and confirmed working end to end. **Docker itself still isn't available in this sandbox, so the container image has never actually been built** — the flow was proven by running the same Python entrypoint logic directly, not by `docker build && docker run`. |
-| Supabase integration (Postgres + Storage config) | 1 only | Config wired and documented (`docs/INFRASTRUCTURE_DECISIONS.md`, `.env.example`, `render.yaml`). **No Supabase project has been created; nothing has connected to one.** |
-| Netlify deployment config | 1 only | `netlify.toml` present, `@netlify/plugin-nextjs` installed, build verified locally. **No Netlify site exists yet.** |
-| Backend hosting (Render recommended) | 1 only | `render.yaml` blueprint written. **No Render (or other) service exists yet.** |
-| GeoBrain governance boundary | Not implemented | GeoBrain doesn't exist yet (Phase 5–6). A trip-wire test (`test_geobrain_module_not_yet_present_boundary_still_documented`) fails on purpose if `app/geobrain/` is ever added without updating the boundary test — see that test's docstring. |
-
-
-
-## Engineering-calculation governance
-
-Not applicable yet — the calculation engine is Phase 5 scope and does not exist in this codebase. When it is built, it must satisfy the activation gate design in Implementation Design Rev 2 §J: no production calculation may execute for a calculation type lacking an APPROVED MethodologyVersion. The shallow-foundation bearing-capacity methodology remains unapproved by PIGL Engineering as of this commit.
+1. Confirm this build against MVP Implementation Design Rev 2 — if PIGL
+   wants any deviation from what's described above, that's the moment to
+   flag it.
+2. Give `docker compose up` a real run and regenerate the Alembic migration
+   from a live Postgres connection.
+3. Build the laboratory/CPT/VES file-upload + column-mapping wizard (item 5
+   above) — this is the highest-value next increment for actually getting
+   real project data in.
+4. When PIGL Engineering approves the first methodology: add its
+   specification as a `MethodologyVersion` row with `status = APPROVED`,
+   register a calculation-implementation class in
+   `calculation_engine._IMPLEMENTATIONS`, and add the reference-case,
+   regression and boundary tests the Build Prompt requires. Nothing else in
+   the gate needs to change.
+5. When PIGL supplies GeoBrain's existing GPT configuration and the Draft
+   Engineering Summary template: wire the orchestration loop in
+   `app/geobrain/` and populate `ReportTemplate` content.

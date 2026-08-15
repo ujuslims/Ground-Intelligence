@@ -1,142 +1,94 @@
 """
-FastAPI dependencies for authentication and RBAC enforcement.
+Request-scoped dependencies: current user, RBAC permission checks, and
+project-membership scoping.
 
-get_current_user resolves the session cookie -> UserSession -> User, doing
-the server-side validation the Implementation Design requires (expiry,
-idle timeout, revocation) rather than trusting the cookie's mere presence.
-
-require_permission / require_project_permission are dependency factories
-used by every module's router to enforce the data-driven RBAC model
-(Rev 2 §E): a user's *global* permissions come from their Role's
-RolePermission rows; project-scoped actions additionally require a
-ProjectMembership row for that specific project.
+Design principle (Rev 2 §E.2): permissions are data (Role/Permission/
+RolePermission rows), so `require_permission("investigation:write")` below
+never hard-codes which roles have which rights -- it looks the grant up.
+ProjectMembership additionally scopes access to specific projects (Tech
+Spec §8): holding ENGINEER globally does not grant access to a project the
+user has no membership row for.
 """
-import uuid
 from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session as DBSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.security import hash_token
-from app.models.rbac import Permission, ProjectMembership, Role, RolePermission, User, UserSession
+from app.models.identity import Session as SessionModel, User, ProjectMembership, RolePermission, Permission
+
+settings = get_settings()
 
 
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    settings = get_settings()
-    token = request.cookies.get(settings.session_cookie_name)
+def get_current_user(request: Request, db: DBSession = Depends(get_db)) -> User:
+    token = request.cookies.get(settings.SESSION_COOKIE_NAME)
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
 
-    token_hash = hash_token(token)
-    session = db.query(UserSession).filter(UserSession.token_hash == token_hash).first()
-    now = datetime.now(timezone.utc)
-
-    if session is None or session.revoked:
+    session = db.get(SessionModel, token)
+    if session is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid session")
-    if session.expires_at.replace(tzinfo=timezone.utc) < now:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired")
-    idle_cutoff = session.last_seen_at.replace(tzinfo=timezone.utc)
-    idle_limit_minutes = settings.session_idle_timeout_minutes
-    if (now - idle_cutoff).total_seconds() > idle_limit_minutes * 60:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session idle timeout")
 
-    user = db.get(User, session.user_id)
-    if user is None or user.status != "ACTIVE":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User inactive")
+    now = datetime.now(timezone.utc)
+    if session.expires_at.replace(tzinfo=timezone.utc) < now:
+        db.delete(session)
+        db.commit()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired")
+
+    idle_limit = settings.SESSION_IDLE_TIMEOUT_MINUTES * 60
+    last_seen = session.last_seen_at.replace(tzinfo=timezone.utc)
+    if (now - last_seen).total_seconds() > idle_limit:
+        db.delete(session)
+        db.commit()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session idle timeout")
 
     session.last_seen_at = now
     db.commit()
+
+    user = db.get(User, session.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or inactive")
     return user
 
 
-def _user_global_permission_codes(db: Session, user: User) -> set[str]:
-    """
-    A user's global (non-project-scoped) permission set is the union of:
-      (a) permissions granted by the user's global_role_id, if any
-          (typically ADMINISTRATOR -- see User.global_role_id docstring), and
-      (b) permissions granted by every Role attached to the user through
-          any ProjectMembership.
-    This is used for actions that aren't scoped to one specific project,
-    such as "can create a new project at all" or "can manage users."
-    Project-scoped actions use require_project_permission instead, which
-    checks membership on the specific project_id in the path.
-    """
-    codes: set[str] = set()
-
-    if user.global_role_id is not None:
-        global_rows = (
-            db.query(Permission.code)
-            .join(RolePermission, RolePermission.permission_id == Permission.id)
-            .filter(RolePermission.role_id == user.global_role_id)
-            .all()
-        )
-        codes.update(r[0] for r in global_rows)
-
-    membership_rows = (
-        db.query(Permission.code)
-        .join(RolePermission, RolePermission.permission_id == Permission.id)
-        .join(Role, Role.id == RolePermission.role_id)
-        .join(ProjectMembership, ProjectMembership.role_id == Role.id)
-        .filter(ProjectMembership.user_id == user.id)
-        .distinct()
-        .all()
+def get_project_role(db: DBSession, user: User, project_id: str) -> str | None:
+    membership = (
+        db.query(ProjectMembership)
+        .filter(ProjectMembership.project_id == project_id, ProjectMembership.user_id == user.id)
+        .first()
     )
-    codes.update(r[0] for r in membership_rows)
-    return codes
+    if not membership:
+        return None
+    return membership.role_id
 
 
-def require_permission(permission_code: str):
-    """Dependency factory: require a permission the user holds in ANY project (e.g. admin actions)."""
-
-    def _check(
-        user: User = Depends(get_current_user), db: Session = Depends(get_db)
-    ) -> User:
-        codes = _user_global_permission_codes(db, user)
-        if permission_code not in codes:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing permission: {permission_code}")
-        return user
-
-    return _check
-
-
-def require_project_permission(permission_code: str):
+def require_permission(permission_code: str, min_level: str = "full"):
     """
-    Dependency factory for project-scoped endpoints. Expects a `project_id`
-    path parameter. Enforces both: (a) the user has a ProjectMembership for
-    this specific project, and (b) that membership's role grants the
-    requested permission.
+    Returns a FastAPI dependency that checks the current user holds
+    `permission_code` (at `min_level` or better) in AT LEAST ONE project they
+    are a member of. Route handlers that operate on a specific project should
+    additionally re-check membership for that exact project_id -- this
+    dependency alone is not a project-scoping guarantee, only a coarse
+    "does this user have this capability anywhere" gate used for
+    admin-style / project-creation endpoints.
     """
+    level_rank = {"none": 0, "view": 1, "comment": 2, "full": 3}
 
-    def _check(
-        project_id: uuid.UUID,
-        user: User = Depends(get_current_user),
-        db: Session = Depends(get_db),
-    ) -> User:
-        membership = (
-            db.query(ProjectMembership)
-            .filter(ProjectMembership.project_id == project_id, ProjectMembership.user_id == user.id)
-            .first()
-        )
-        if membership is None:
-            # 404, not 403: a user with no relationship to this project
-            # should not be able to distinguish "project doesn't exist"
-            # from "project exists but you have no membership" by response
-            # code. A user who IS a member but lacks the specific
-            # permission gets 403 below instead, which is fine to reveal.
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    def _check(user: User = Depends(get_current_user), db: DBSession = Depends(get_db)) -> User:
+        memberships = db.query(ProjectMembership).filter(ProjectMembership.user_id == user.id).all()
+        role_ids = {m.role_id for m in memberships}
+        if not role_ids:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "No project membership grants this permission")
 
-        has_permission = (
+        grants = (
             db.query(RolePermission)
             .join(Permission, Permission.id == RolePermission.permission_id)
-            .filter(RolePermission.role_id == membership.role_id, Permission.code == permission_code)
-            .first()
+            .filter(RolePermission.role_id.in_(role_ids), Permission.code == permission_code)
+            .all()
         )
-        if has_permission is None:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, f"Role does not grant permission: {permission_code}"
-            )
+        if not grants or max(level_rank.get(g.level, 0) for g in grants) < level_rank.get(min_level, 3):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing permission: {permission_code}")
         return user
 
     return _check

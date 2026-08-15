@@ -1,16 +1,12 @@
 /**
- * Thin fetch wrapper for the Ground Intelligence backend API.
+ * Thin fetch wrapper for the Ground Intelligence API.
  *
- * credentials: "include" is required because auth is a server-managed
- * session cookie (Implementation Design Rev 2 §I.1) -- there is no bearer
- * token for this client to hold or store. NEXT_PUBLIC_API_URL points at
- * the FastAPI service; it is the ONLY backend this frontend talks to.
- * There is no direct Supabase client anywhere in this app -- Supabase is
- * infrastructure behind the FastAPI service, not something the frontend
- * connects to (see docs/INFRASTRUCTURE_DECISIONS.md).
+ * Auth is server-managed session cookies (Rev 2 §I.1) -- credentials:
+ * "include" on every call, no token handling here, nothing touches
+ * localStorage. The API base URL is a public runtime config value, not a
+ * secret.
  */
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 export class ApiError extends Error {
   status: number;
@@ -21,55 +17,51 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers ?? {}),
-    },
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
-
   if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail ?? detail;
-    } catch {
-      // response had no JSON body; fall back to statusText
-    }
-    throw new ApiError(res.status, detail);
+    const body = await res.text();
+    throw new ApiError(res.status, body || res.statusText);
   }
-
-  if (res.status === 204) {
-    return undefined as T;
-  }
-  return res.json() as Promise<T>;
-}
-
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  status: string;
-}
-
-export interface Project {
-  id: string;
-  project_code: string;
-  name: string;
-  client_id: string;
-  project_type: string | null;
-  description: string | null;
-  location: string | null;
-  status: string;
+  if (res.status === 204) return undefined as T;
+  return res.json();
 }
 
 export const api = {
   login: (email: string, password: string) =>
-    request<User>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
-  logout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
-  me: () => request<User>("/auth/me"),
-  listProjects: () => request<Project[]>("/projects"),
-  getProject: (id: string) => request<Project>(`/projects/${id}`),
+    request<{ id: string; email: string; full_name: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  logout: () => request("/api/auth/logout", { method: "POST" }),
+  me: () => request<{ id: string; email: string; full_name: string }>("/api/auth/me"),
+
+  listProjects: () => request<any[]>("/api/projects"),
+  createProject: (payload: { organization_id: string; name: string; project_code?: string; description?: string }) =>
+    request<any>("/api/projects", { method: "POST", body: JSON.stringify(payload) }),
+  getProject: (id: string) => request<any>(`/api/projects/${id}`),
+
+  listLocations: (projectId: string) => request<any[]>(`/api/projects/${projectId}/locations`),
+  listInvestigations: (projectId: string) => request<any[]>(`/api/projects/${projectId}/investigations`),
+
+  listCpts: (locationId: string) => request<any[]>(`/api/locations/${locationId}/cpts`),
+  getCptReadings: (cptId: string) => request<any[]>(`/api/cpts/${cptId}/readings`),
+
+  getMethodologies: (calculationType: string) =>
+    request<any[]>(`/api/methodologies?calculation_type=${encodeURIComponent(calculationType)}`),
+
+  runCalculation: (calculationId: string, inputs: Record<string, any>) =>
+    request<any>(`/api/calculations/${calculationId}/run`, { method: "POST", body: JSON.stringify({ inputs }) }),
+
+  generateDraftSummary: (projectId: string) =>
+    request<any>(`/api/projects/${projectId}/reports/draft-summary`, { method: "POST" }),
+
+  auditEvents: (projectId: string) => request<any[]>(`/api/projects/${projectId}/audit-events`),
+
+  listRoles: () => request<any[]>("/api/admin/roles"),
+  createUser: (payload: { email: string; full_name: string; password: string; role_name: string; project_id: string }) =>
+    request<any>("/api/admin/users", { method: "POST", body: JSON.stringify(payload) }),
 };
