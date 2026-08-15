@@ -32,7 +32,17 @@ services:
       - key: GI_COOKIE_SECURE
         value: "true"
       - key: GI_COOKIE_SAMESITE
-        value: lax
+        value: none  # required (not "lax") because the frontend (Netlify) and this
+                      # backend (Render) are different domains -- a Lax cookie is
+                      # never sent on cross-site fetch()/XHR, only top-level
+                      # navigations, which would silently break every authenticated
+                      # request after a successful login. Requires GI_COOKIE_SECURE
+                      # (below) to be "true" -- browsers reject SameSite=None
+                      # cookies that aren't Secure.
+      - key: GI_CORS_ALLOWED_ORIGINS
+        sync: false   # your Netlify site's URL, e.g. https://ground-intelligence.netlify.app
+                      # (no trailing slash). Required -- without it the browser blocks
+                      # every request from the frontend before this app ever sees it.
       - key: GI_STORAGE_PROVIDER
         value: s3
       - key: GI_STORAGE_BUCKET

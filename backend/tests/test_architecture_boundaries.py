@@ -121,6 +121,77 @@ def test_frontend_api_client_always_targets_the_backend_env_var():
     assert offenders == [], f"lib/api.ts appears to reference a Supabase client directly: {offenders}"
 
 
+def test_entrypoint_fails_fast_on_blank_database_url():
+    """
+    Regression test for a real production incident: the first live Render
+    deploy crashed with a cryptic SQLAlchemy traceback
+    ("Could not parse SQLAlchemy URL from given URL string") because
+    GI_DATABASE_URL was blank when the container started. Root-caused by
+    reproducing the exact error locally: an empty/whitespace-only string
+    is what triggers that specific message, not the unencoded-special-
+    character password originally suspected.
+
+    docker-entrypoint.sh now checks for this before running Alembic at
+    all, so the failure is a clear one-paragraph message instead of a
+    Python stack trace. This test checks the guard clause is still
+    present in the script (a change to docker-entrypoint.sh that quietly
+    removed it wouldn't be caught by any Python-level test otherwise).
+    """
+    entrypoint = REPO_ROOT / "backend" / "docker-entrypoint.sh"
+    text = entrypoint.read_text()
+    assert 'if [ -z "$GI_DATABASE_URL" ]' in text
+    assert "exit 1" in text
+
+
+def test_cors_allows_configured_frontend_origin_and_rejects_others():
+    """
+    Regression test for a real production incident: login failed from the
+    live Netlify frontend with a generic 'Login failed' message (not a
+    'wrong password' message), because the backend had no CORS
+    configuration at all -- the browser was blocking every cross-origin
+    request before the app ever saw it. Verified directly by inspecting
+    response headers with an Origin header set, the same way a browser's
+    preflight/actual request would look, rather than assuming the fix
+    works from reading the code.
+    """
+    import os
+
+    os.environ["GI_CORS_ALLOWED_ORIGINS"] = "https://ground-intelligence.netlify.app"
+    # FastAPI app is constructed at import time in app.main; the CORS
+    # middleware reads settings via get_settings(), which is lru_cached,
+    # so re-import in a subprocess-free way isn't reliable here. This test
+    # instead builds a fresh app instance directly via create_app() after
+    # clearing the settings cache, which is the supported way to test
+    # config-dependent app construction.
+    from app.core.config import get_settings
+    get_settings.cache_clear()
+    from app.main import create_app
+
+    app = create_app()
+    from starlette.testclient import TestClient as StarletteTestClient
+
+    client = StarletteTestClient(app)
+
+    allowed = client.options(
+        "/auth/login",
+        headers={
+            "Origin": "https://ground-intelligence.netlify.app",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert allowed.headers.get("access-control-allow-origin") == "https://ground-intelligence.netlify.app"
+    assert allowed.headers.get("access-control-allow-credentials") == "true"
+
+    blocked = client.options(
+        "/auth/login",
+        headers={"Origin": "https://evil.example.com", "Access-Control-Request-Method": "POST"},
+    )
+    assert blocked.headers.get("access-control-allow-origin") is None
+
+    get_settings.cache_clear()
+    os.environ.pop("GI_CORS_ALLOWED_ORIGINS", None)
+
+
 def test_geobrain_module_not_yet_present_boundary_still_documented():
     """
     GeoBrain (Phase 5-6 scope) does not exist in this codebase yet, so

@@ -53,8 +53,47 @@ Full variable reference with inline explanation: `backend/.env.example`.
 4. `docker-entrypoint.sh` runs `alembic upgrade head` against the real `GI_DATABASE_URL` (Supabase), then starts serving traffic. If the migration fails, the container does not start — it cannot silently serve against a stale schema.
 5. `GET /health` is the host's health-check endpoint.
 
-## What this document does NOT claim
+## Known incident: CORS and cross-site cookies (frontend on Netlify, backend on Render)
 
+**What happened:** logging in from the live Netlify frontend showed a generic "Login failed" message rather than a specific error.
+
+**Root cause, confirmed by direct reproduction, not guessed:** the backend had no CORS configuration at all. Verified by sending a request with an `Origin` header set (the same way a browser does) and inspecting the response headers directly — no `Access-Control-Allow-Origin` header was present, which means the browser blocks the request client-side before the app's response is ever read. That surfaces to `fetch()` as a generic network failure, which is exactly the frontend's fallback "Login failed" message (see `frontend/app/login/page.tsx`) — not the specific "Invalid email or password" the backend would have sent if the request had actually reached it.
+
+**Fix applied:**
+- `app/main.py` now adds `CORSMiddleware`, restricted to the exact origin(s) in `GI_CORS_ALLOWED_ORIGINS` (required, since `allow_credentials=True` means a wildcard `*` origin is not permitted by browsers). Verified directly: a request with the configured origin gets the CORS header back; a request with a different origin does not. Covered by `tests/test_architecture_boundaries.py::test_cors_allows_configured_frontend_origin_and_rejects_others`.
+- **A second, related issue that would have surfaced immediately after fixing CORS:** the session cookie was configured with `SameSite=Lax`, which browsers only send on top-level navigations for cross-site requests — not on the `fetch()`/XHR calls this frontend makes. Login would have appeared to succeed (a `Set-Cookie` response is received) but every subsequent request (`/auth/me`, `/projects`) would silently fail with 401, because the cookie would never actually be sent back. Fixed by setting `GI_COOKIE_SAMESITE=none` in `render.yaml` (this requires `GI_COOKIE_SECURE=true`, which was already set).
+
+**Required environment variables added this stage:**
+| Variable | Where | Value |
+|---|---|---|
+| `GI_CORS_ALLOWED_ORIGINS` | Render | Your Netlify site's exact URL, no trailing slash |
+| `GI_COOKIE_SAMESITE` | Render | `none` (changed from `lax`) |
+
+**If your Render service was created before this fix:** these won't apply automatically — `render.yaml` changes only affect new deploys/blueprint syncs. Go to Render → your service → Environment tab, add `GI_CORS_ALLOWED_ORIGINS` manually, change `GI_COOKIE_SAMESITE` to `none`, save, then trigger Manual Deploy.
+
+## Known incident: Row Level Security disabled on a shared Supabase project
+
+**What happened:** the Supabase project used for Ground Intelligence is shared with a pre-existing, unrelated production application (a consumer delivery app, reused due to Supabase's free-tier project limits — see `docs/INFRASTRUCTURE_DECISIONS.md`). Supabase's security advisor flagged, at `ERROR` severity, that all 11 Ground Intelligence tables had Row Level Security disabled while being exposed through Supabase's PostgREST/GraphQL API to the `anon` and `authenticated` roles — meaning anyone with the project's public API key could have read or written `users`, `audit_events`, `roles`, etc. directly, bypassing FastAPI entirely.
+
+**Root cause:** Ground Intelligence's Alembic migrations create tables but never touch Postgres's RLS settings, and Supabase enables PostgREST/GraphQL access to every `public` schema table by default regardless of whether the owning application intends to use that API layer. Ground Intelligence never does — FastAPI connects directly via a plain Postgres connection string — so this was pure unintended exposure, not something anyone configured on purpose.
+
+**Fix applied (with explicit user confirmation before execution):**
+1. `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` was applied immediately to the live Supabase project for all 11 tables, with zero policies attached — this fully blocks anon/authenticated API access while having no effect on FastAPI's direct connection. Verified via Supabase's own advisor before/after: the 11 `ERROR`-level "RLS Disabled" findings became `INFO`-level "RLS Enabled No Policy" (expected and correct), and table row counts were confirmed unchanged.
+2. The same change was added as a proper, reversible Alembic migration (`00611254f57b_enable_rls_phase1_tables.py`) rather than left as an untracked manual exception, so it's applied automatically to any future environment. It safely no-ops on non-Postgres dialects (e.g. the SQLite test suite).
+
+**Residual, lower-severity items intentionally left alone:** Supabase's advisor also flagged `WARN`-level GraphQL schema-visibility notices and a `SECURITY DEFINER` function warning (`handle_new_user`) — the latter belongs to the pre-existing unrelated application, not Ground Intelligence, and was not touched.
+
+## Known incident: blank `GI_DATABASE_URL` on first Render Blueprint deploy
+
+**What happened:** the first live deploy attempt failed at container start with `sqlalchemy.exc.ArgumentError: Could not parse SQLAlchemy URL from given URL string`.
+
+**Root cause, confirmed by direct reproduction (not guessed):** that specific error message is produced by SQLAlchemy's URL parser only when the input is empty, whitespace-only, or unset. Several other plausible causes were tested and ruled out — unencoded special characters in a Supabase-generated password (`@`, `!`, `#`) all parsed correctly in this SQLAlchemy version. The actual cause was that `GI_DATABASE_URL` was blank when the container started, most likely because Render's Blueprint flow created and started the service before the secret values entered in the initial setup form were fully attached to it — a known rough edge with Render Blueprints, not a mistake in what was typed.
+
+**Fix applied:** `docker-entrypoint.sh` now checks for a blank `GI_DATABASE_URL` before attempting anything else, and fails with a one-paragraph actionable message instead of a Python stack trace. Covered by `tests/test_architecture_boundaries.py::test_entrypoint_fails_fast_on_blank_database_url`.
+
+**If you hit this:** go to Render → your service → **Environment** tab (not the initial Blueprint setup form — the tab on the running service), confirm `GI_DATABASE_URL` actually has a value, re-enter it if blank, save, then trigger **Manual Deploy**.
+
+## What this document does NOT claim
 - That a Render (or any) service currently exists for this project.
 - That the migration has been run against a live Supabase database.
 - That any of this has been exercised end-to-end outside CI's ephemeral Postgres container.
