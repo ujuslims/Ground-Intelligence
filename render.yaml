@@ -17,7 +17,12 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: starter  # smallest paid plan with no spin-down; see docs/DEPLOYMENT.md for cost notes
+    plan: free  # $0/month, no credit card required (Render's free web-service tier).
+                # Trade-off: the instance sleeps after 15 minutes of inactivity and
+                # the first request after sleep takes 30-60 seconds to wake it back
+                # up. Acceptable for an MVP with no budget; revisit once there's
+                # budget and/or real users who'd be affected by that delay -- see
+                # docs/DEPLOYMENT.md for the upgrade path when that day comes.
     healthCheckPath: /health
     envVars:
       - key: GI_ENVIRONMENT

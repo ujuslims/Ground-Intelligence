@@ -2,6 +2,18 @@
 
 **Status of this document: configuration finalized, NOT yet exercised against a live host.** Everything below describes what will run once a host is actually connected; it is not a claim that a deployment has happened.
 
+## Cost — MVP configuration (zero budget)
+
+`render.yaml` is configured with `plan: free`. Render's free web-service tier requires **no credit card** and gives 750 hours/month — enough for one instance running continuously, all month, for $0. The trade-off: the instance sleeps after 15 minutes of inactivity, and the first request after sleep takes 30–60 seconds to respond. For an MVP with no traffic yet and no budget, this is the right trade to make — do not upgrade to a paid plan until there's an actual reason to (real users who'd notice the cold-start delay, or a budget approved for it).
+
+**If Render still prompts for a credit card despite `plan: free`:** this has been reported by some users even on genuinely free usage — it appears to be an account-level fraud check on Render's side in some cases, not a hidden cost. If it happens, don't enter a card; tell me and we'll move to one of the zero-cost fallbacks below rather than assume you have to pay.
+
+**Zero-cost fallbacks, if Render's free tier doesn't work out:**
+- **Fly.io** — has a free usage allowance, but requires a card on file even to stay within it (it just won't charge you if you stay under the limit). Not recommended here specifically because your stated constraint is avoiding payment friction entirely, not just avoiding charges.
+- **Self-hosting** — run the Docker container on your own always-on machine, exposed via a free Cloudflare Tunnel (no card, no time limit, but the app is only "live" while your machine is on and connected). A legitimate zero-cost option for an internal MVP demo, not a real production posture.
+
+The rest of this document (Dockerfile, migration-on-deploy behavior, required environment variables) is unchanged by the plan choice.
+
 ## Recommended host: Render
 
 **Why Render over the alternatives (Fly.io, Railway, a plain VM):**
@@ -11,7 +23,7 @@
 | Runs a persistent Docker container (required — Netlify/serverless cannot host FastAPI, see `docs/INFRASTRUCTURE_DECISIONS.md`) | Yes | Yes | Yes | Yes |
 | Setup complexity for a small team | Low — connect repo, confirm blueprint | Medium — CLI-driven, more knobs | Low | High — you manage the OS |
 | Built-in health checks, zero-downtime deploys | Yes | Yes (needs config) | Yes | Manual |
-| Cost at MVP/pilot scale | ~$7–25/mo | ~$5–20/mo (usage-based, less predictable) | ~$5–20/mo | Variable, plus your time |
+| Cost at MVP/pilot scale | **$0 on the free tier** (750 hrs/mo, no card required, sleeps after 15 min idle — see cost note below); ~$7–25/mo once you outgrow it | Requires a card on file even for free usage | ~$5–20/mo, free trial credit only ($5, expires) | Variable, plus your time |
 | Matches "avoid unnecessary infrastructure complexity" (PIGL Development Discipline) | Yes | More moving parts than needed here | Yes | No — most complexity of all three |
 
 Render is the recommendation. Railway is a reasonable second choice if you specifically prefer its UI. Fly.io and a plain VM are not recommended for this project — more operational surface than an MVP with a small team needs.
