@@ -1,0 +1,68 @@
+name: staging-smoke-test
+
+# Manually triggered ONLY (workflow_dispatch) -- this is the actual
+# mechanism for exercising a live Supabase connection, but it does not run
+# automatically on push/PR and does not run at all until the required
+# GitHub Actions secrets exist. Until those secrets are added (see the
+# manual-setup checklist), this workflow is present in the repo but inert.
+#
+# What it verifies, against the REAL staging Supabase project (not CI's
+# ephemeral Postgres container):
+#   1. The Alembic migration applies cleanly to a live Supabase Postgres.
+#   2. The backend can start and its /health endpoint responds.
+# It does not deploy anything and does not touch production data -- it
+# should be pointed at a staging Supabase project, not the production one.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # This job intentionally does nothing if the required secret is
+    # absent, rather than failing loudly -- so adding this workflow file
+    # doesn't itself require secrets to exist yet.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required secret is present
+        id: check
+        run: |
+          if [ -z "${{ secrets.STAGING_DATABASE_URL }}" ]; then
+            echo "STAGING_DATABASE_URL secret not set -- skipping smoke test. See docs/DEPLOYMENT.md and the manual setup checklist."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.skip == 'false'
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        if: steps.check.outputs.skip == 'false'
+        run: pip install -r requirements.txt
+
+      - name: Run Alembic migration against live staging Supabase
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GI_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: alembic upgrade head
+
+      - name: Start backend and check /health
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GI_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          SERVER_PID=$!
+          sleep 3
+          curl -sf http://localhost:8000/health
+          kill $SERVER_PID

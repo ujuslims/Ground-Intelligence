@@ -1,0 +1,22 @@
+# Netlify hosts the Next.js frontend ONLY (per approved infrastructure
+# decision -- see docs/INFRASTRUCTURE_DECISIONS.md). It does not host the
+# FastAPI backend: Netlify's serverless/edge runtime is not suited to a
+# persistent service with its own Postgres connection pool and Alembic
+# migrations.
+#
+# Required environment variable, set in the Netlify UI (Site configuration
+# -> Environment variables), NOT in this file:
+#   NEXT_PUBLIC_API_URL = <the deployed backend's URL, e.g. from Render>
+# This is a NEXT_PUBLIC_ variable, meaning it is bundled into the
+# client-side JS and is not a secret -- it's just the backend's public
+# URL. It still belongs in Netlify's env var UI, not hard-coded here, so
+# staging and production can point at different backend deployments
+# without a code change.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

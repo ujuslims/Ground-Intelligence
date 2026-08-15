@@ -1,0 +1,46 @@
+# Render Blueprint for the Ground Intelligence backend.
+#
+# Render is the RECOMMENDED FastAPI-compatible host (see
+# docs/DEPLOYMENT.md for why, and for alternatives). This file describes
+# infrastructure shape only -- no secret VALUES live here. Every entry
+# marked `sync: false` means "Render will prompt for this value in its
+# dashboard and store it as an encrypted environment variable"; it is
+# never written to this file or committed to Git.
+#
+# Deploying this blueprint does not happen automatically -- a human
+# connects the GitHub repo in the Render dashboard and confirms it. See
+# the manual-setup checklist provided separately.
+
+services:
+  - type: web
+    name: ground-intelligence-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter  # smallest paid plan with no spin-down; see docs/DEPLOYMENT.md for cost notes
+    healthCheckPath: /health
+    envVars:
+      - key: GI_ENVIRONMENT
+        value: production
+      - key: GI_DATABASE_URL
+        sync: false   # Supabase Postgres connection string -- set in Render dashboard, not here
+      - key: GI_COOKIE_SECURE
+        value: "true"
+      - key: GI_COOKIE_SAMESITE
+        value: lax
+      - key: GI_STORAGE_PROVIDER
+        value: s3
+      - key: GI_STORAGE_BUCKET
+        sync: false   # Supabase Storage bucket name
+      - key: GI_STORAGE_ENDPOINT_URL
+        sync: false   # Supabase Storage S3-compatible endpoint
+      - key: GI_STORAGE_REGION
+        sync: false
+      - key: GI_STORAGE_ACCESS_KEY
+        sync: false   # Supabase Storage S3 access key
+      - key: GI_STORAGE_SECRET_KEY
+        sync: false   # Supabase Storage S3 secret key
+      - key: GI_BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: GI_BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
