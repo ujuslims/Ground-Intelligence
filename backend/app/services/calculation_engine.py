@@ -32,6 +32,7 @@ result that is obviously synthetic and clearly labelled as such -- never a
 number that could be mistaken for an engineering result.
 """
 import json
+import math
 from dataclasses import dataclass
 from typing import Callable
 
@@ -65,12 +66,130 @@ def _framework_test_mock(inputs: dict) -> CalculationOutcome:
     )
 
 
+def _eurocode7_square_pad_bearing_da1c2(inputs: dict) -> CalculationOutcome:
+    """
+    Eurocode 7 (EN 1997-1) Design Approach 1, Combination 2, Annex D --
+    drained bearing resistance of a SQUARE pad foundation, vertical/concentric
+    loading, c'=0 reduced form.
+
+    This function implements ONLY the specification recorded against
+    Methodology "Eurocode 7 Bearing Resistance -- Square Pad Foundation",
+    MethodologyVersion v1.0 (APPROVED, approved_by Engr. Uju Uduma Ikpa),
+    exactly as stored in methodology_versions.specification. It does not
+    extend, approximate, or generalise beyond that specification -- any
+    request outside its documented scope is refused below rather than
+    silently computed.
+
+    Required inputs (dict keys):
+        B            -- footing width/breadth, square so length = B (m)
+        Df           -- embedment depth to underside of footing (m)
+        gamma_prime  -- effective unit weight of founding soil (kN/m3)
+        phi          -- effective (drained) friction angle (degrees)
+        c_prime      -- effective cohesion (kPa); must be 0 -- this reduced
+                         form is only specified/verified for c'=0
+
+    Optional:
+        applied_load_kN -- vertical design action Vd (kN), if supplied the
+                            result includes the Vd <= Rd check the spec calls
+                            for.
+    """
+    warnings: list[str] = []
+    required = ["B", "Df", "gamma_prime", "phi"]
+    missing = [k for k in required if k not in inputs or inputs[k] is None]
+    if missing:
+        return CalculationOutcome(
+            outcome="REFUSED_NO_APPROVED_METHODOLOGY",
+            result=None,
+            warnings=[],
+            message=f"Missing required input(s) for this methodology: {', '.join(missing)}.",
+        )
+
+    B = float(inputs["B"])
+    Df = float(inputs["Df"])
+    gamma_prime = float(inputs["gamma_prime"])
+    phi = float(inputs["phi"])
+    c_prime = float(inputs.get("c_prime", 0) or 0)
+
+    if c_prime != 0:
+        return CalculationOutcome(
+            outcome="REFUSED_NO_APPROVED_METHODOLOGY",
+            result=None,
+            warnings=[],
+            message=(
+                "This methodology's approved specification (v1.0) covers the drained, "
+                "c'=0 reduced form only. A non-zero effective cohesion was supplied, "
+                "which is outside the approved scope -- submit a Request/Add "
+                "Methodology if a c'>0 formulation is needed."
+            ),
+        )
+    if B <= 0 or Df < 0 or not (0 < phi < 45):
+        return CalculationOutcome(
+            outcome="REFUSED_NO_APPROVED_METHODOLOGY",
+            result=None,
+            warnings=[],
+            message="Input values are outside a physically valid range for this methodology.",
+        )
+    if not (1.0 <= B <= 3.0):
+        warnings.append(
+            f"B = {B} m is outside this methodology's demonstrated verification envelope (1.0-3.0 m). "
+            "Result is extrapolated beyond the verified case and should be reviewed with additional care."
+        )
+    if not (1.0 <= Df <= 2.0):
+        warnings.append(
+            f"Df = {Df} m is outside this methodology's demonstrated verification envelope (1.0-2.0 m). "
+            "Result is extrapolated beyond the verified case and should be reviewed with additional care."
+        )
+
+    phi_r = math.radians(phi)
+    phi_d = math.atan(math.tan(phi_r) / 1.25)  # DA1-C2: tan(phi) partial factor = 1.25
+
+    Nq = math.tan(math.radians(45) + phi_d / 2) ** 2 * math.exp(math.pi * math.tan(phi_d))
+    Ny = (Nq - 1) * math.tan(1.4 * phi_d)
+    sq = 1 + math.sin(phi_d)
+    sy = 0.70
+
+    B_prime = B  # concentric load only -- no eccentricity reduction in this version's scope
+    q_prime = gamma_prime * Df  # effective overburden at founding level
+
+    R_A_prime = q_prime * Nq * sq + 0.5 * gamma_prime * B_prime * Ny * sy
+    design_R_A = R_A_prime / (1.4 * 1.4)  # R/A partial factor 1.4, model factor 1.4
+
+    result = {
+        "methodology": "Eurocode 7 Bearing Resistance -- Square Pad Foundation, v1.0",
+        "design_approach": "DA1, Combination 2, Annex D (drained, c'=0)",
+        "inputs_used": {"B_m": B, "Df_m": Df, "gamma_prime_kNm3": gamma_prime, "phi_deg": phi, "c_prime_kPa": c_prime},
+        "phi_d_deg": round(math.degrees(phi_d), 6),
+        "Nq": round(Nq, 6),
+        "Ny": round(Ny, 6),
+        "sq": round(sq, 6),
+        "sy": sy,
+        "q_prime_kNm2": round(q_prime, 6),
+        "R_over_A_prime_kNm2": round(R_A_prime, 6),
+        "design_R_over_A_kNm2": round(design_R_A, 6),
+    }
+
+    if inputs.get("applied_load_kN") is not None:
+        Vd = float(inputs["applied_load_kN"])
+        A_prime = B_prime * B_prime
+        Rd_kN = design_R_A * A_prime
+        result["applied_load_kN"] = Vd
+        result["design_resistance_kN"] = round(Rd_kN, 3)
+        result["check_Vd_le_Rd"] = "PASS" if Vd <= Rd_kN else "FAIL"
+        if Vd > Rd_kN:
+            warnings.append("Vd > Rd -- the applied load exceeds the design bearing resistance for this footing.")
+
+    return CalculationOutcome(outcome="COMPLETED", result=result, warnings=warnings)
+
+
 # Registry of real calculation implementations, keyed by
-# (calculation_type, methodology_id, methodology_version_id).
-# Deliberately EMPTY for every real engineering calculation_type -- see module
-# docstring. Only the non-production mock is registered.
+# f"{methodology_id}:{methodology_version_id}" (see _verify_and_run below).
+# Only entries a human has deliberately reviewed and approved may be added
+# here -- see module docstring.
 _IMPLEMENTATIONS: dict[str, Callable[[dict], CalculationOutcome]] = {
     "FRAMEWORK_TEST_MOCK": _framework_test_mock,
+    # Eurocode 7 Bearing Resistance -- Square Pad Foundation, v1.0
+    # (Methodology.id : MethodologyVersion.id), APPROVED by Engr. Uju Uduma Ikpa.
+    "e3a1b8c2-6f4d-4a9e-9c1a-2d5e7f8b1a30:f4b2c9d3-7g5e-4b0f-ad2b-3e6f8g9c2b41": _eurocode7_square_pad_bearing_da1c2,
 }
 
 
