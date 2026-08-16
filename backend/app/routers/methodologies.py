@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.identity import User
 from app.models.engineering import Methodology, MethodologyVersion, MethodologyRequest, MethodologyStatus
-from app.schemas.engineering import MethodologyOut, MethodologyRequestCreate, MethodologyRequestOut
+from app.schemas.engineering import MethodologyOut, MethodologyVersionOut, MethodologyRequestCreate, MethodologyRequestOut
 from app.services.audit import log_event
 
 router = APIRouter(prefix="/api", tags=["engineering"])
@@ -38,6 +38,18 @@ def list_methodologies(calculation_type: str | None = None, db: Session = Depend
         if has_approved:
             result.append(m)
     return result
+
+
+@router.get("/methodologies/{methodology_id}/versions", response_model=list[MethodologyVersionOut])
+def list_methodology_versions(methodology_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Only APPROVED versions are exposed -- consistent with the governance
+    gate in app/services/calculation_engine.py, which independently
+    re-verifies status regardless of what this endpoint returns."""
+    return (
+        db.query(MethodologyVersion)
+        .filter_by(methodology_id=methodology_id, status=MethodologyStatus.APPROVED.value)
+        .all()
+    )
 
 
 @router.post("/methodology-requests", response_model=MethodologyRequestOut)
