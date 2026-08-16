@@ -59,6 +59,16 @@ export const api = {
   getMethodologies: (calculationType: string) =>
     request<any[]>(`/api/methodologies?calculation_type=${encodeURIComponent(calculationType)}`),
 
+  getMethodologyVersions: (methodologyId: string) =>
+    request<any[]>(`/api/methodologies/${methodologyId}/versions`),
+
+  createCalculation: (payload: {
+    project_id: string;
+    calculation_type: string;
+    methodology_id?: string;
+    methodology_version_id?: string;
+  }) => request<any>("/api/calculations", { method: "POST", body: JSON.stringify(payload) }),
+
   runCalculation: (calculationId: string, inputs: Record<string, any>) =>
     request<any>(`/api/calculations/${calculationId}/run`, { method: "POST", body: JSON.stringify({ inputs }) }),
 
