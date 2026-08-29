@@ -1,15 +1,46 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.identity import User
-from app.models.engineering import Calculation
+from app.models.engineering import Calculation, CalculationVersion
 from app.schemas.engineering import CalculationCreate, CalculationOut, CalculationRunRequest
 from app.services.audit import log_event
 from app.services.calculation_engine import calculation_runner
 
 router = APIRouter(prefix="/api", tags=["engineering"])
+
+
+@router.get("/projects/{project_id}/calculations")
+def list_project_calculations(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Results screen: every Calculation on this project, each with its most
+    recent CalculationVersion's review status and outcome. This is the
+    reviewed record -- Analysis is the workbench that produces it."""
+    calcs = db.query(Calculation).filter_by(project_id=project_id).order_by(Calculation.created_at.desc()).all()
+    out = []
+    for calc in calcs:
+        latest = (
+            db.query(CalculationVersion)
+            .filter_by(calculation_id=calc.id)
+            .order_by(CalculationVersion.version.desc())
+            .first()
+        )
+        out.append({
+            "id": calc.id,
+            "calculation_type": calc.calculation_type,
+            "methodology_id": calc.methodology_id,
+            "methodology_version_id": calc.methodology_version_id,
+            "status": calc.status,
+            "created_at": calc.created_at,
+            "latest_version": latest.version if latest else None,
+            "latest_outcome": latest.outcome if latest else None,
+            "latest_result": json.loads(latest.result) if latest and latest.result else None,
+            "latest_created_at": latest.created_at if latest else None,
+        })
+    return out
 
 
 @router.post("/calculations", response_model=CalculationOut)

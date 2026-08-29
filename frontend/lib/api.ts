@@ -72,6 +72,8 @@ export const api = {
   runCalculation: (calculationId: string, inputs: Record<string, any>) =>
     request<any>(`/api/calculations/${calculationId}/run`, { method: "POST", body: JSON.stringify({ inputs }) }),
 
+  listCalculations: (projectId: string) => request<any[]>(`/api/projects/${projectId}/calculations`),
+
   generateDraftSummary: (projectId: string) =>
     request<any>(`/api/projects/${projectId}/reports/draft-summary`, { method: "POST" }),
 

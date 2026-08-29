@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import "./globals.css";
+import ThemeInit from "@/components/ThemeInit";
+import TopNav from "@/components/TopNav";
+import OuterMain from "@/components/OuterMain";
 
 export const metadata: Metadata = {
   title: "Ground Intelligence",
@@ -10,18 +12,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap" />
+      </head>
       <body>
-        <div className="app-shell">
-          <header className="app-header">
-            <div className="brand">Ground Intelligence</div>
-            <div className="brand-sub">PIGL — MVP</div>
-            <nav style={{ marginLeft: "auto", display: "flex", gap: 16 }}>
-              <Link href="/dashboard" style={{ color: "white", opacity: 0.85, textDecoration: "none", fontSize: "0.9rem" }}>Projects</Link>
-              <Link href="/admin" style={{ color: "white", opacity: 0.85, textDecoration: "none", fontSize: "0.9rem" }}>Admin</Link>
-            </nav>
-          </header>
-          <main>{children}</main>
-        </div>
+        <ThemeInit />
+        <TopNav />
+        <OuterMain>{children}</OuterMain>
       </body>
     </html>
   );
