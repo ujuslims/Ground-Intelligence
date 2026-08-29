@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.authz import require_project_access
 from app.models.identity import User
 from app.models.engineering import Calculation, CalculationVersion
 from app.schemas.engineering import CalculationCreate, CalculationOut, CalculationRunRequest
@@ -19,6 +20,7 @@ def list_project_calculations(project_id: str, db: Session = Depends(get_db), us
     """Results screen: every Calculation on this project, each with its most
     recent CalculationVersion's review status and outcome. This is the
     reviewed record -- Analysis is the workbench that produces it."""
+    require_project_access(db, user, project_id)
     calcs = db.query(Calculation).filter_by(project_id=project_id).order_by(Calculation.created_at.desc()).all()
     out = []
     for calc in calcs:
@@ -45,6 +47,7 @@ def list_project_calculations(project_id: str, db: Session = Depends(get_db), us
 
 @router.post("/calculations", response_model=CalculationOut)
 def create_calculation(payload: CalculationCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, payload.project_id)
     calc = Calculation(**payload.model_dump(), created_by=user.id)
     db.add(calc)
     db.commit()
@@ -64,6 +67,7 @@ def run_calculation(calculation_id: str, payload: CalculationRunRequest, db: Ses
     calc = db.get(Calculation, calculation_id)
     if not calc:
         raise HTTPException(404, "Calculation not found")
+    require_project_access(db, user, calc.project_id)
 
     cv = calculation_runner.run(db, calculation=calc, inputs=payload.inputs, user_id=user.id)
     import json
@@ -80,4 +84,5 @@ def get_calculation(calculation_id: str, db: Session = Depends(get_db), user: Us
     calc = db.get(Calculation, calculation_id)
     if not calc:
         raise HTTPException(404, "Calculation not found")
+    require_project_access(db, user, calc.project_id)
     return calc

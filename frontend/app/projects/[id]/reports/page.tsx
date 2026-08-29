@@ -23,7 +23,7 @@ export default function ReportsPage({ params }: { params: { id: string } }) {
       <h3 style={{ marginTop: 0 }}>Draft Engineering Summary</h3>
       <p className="muted" style={{ marginBottom: 12 }}>
         Assembled from structured project data and reviewed/approved calculations — a preliminary draft
-        for engineer review, not an approved deliverable. Final report templates (PIGL and client formats)
+        for engineer review, not an approved deliverable. Final report templates (organization and client formats)
         are on the roadmap.
       </p>
       <button onClick={generateSummary} disabled={loading}>{loading ? "Generating..." : "Generate draft summary"}</button>

@@ -45,6 +45,7 @@ export default function ProjectLayout({ children, params }: { children: React.Re
       projectId={projectId}
       projectName={project?.name}
       projectCode={project?.project_code}
+      orgName={me?.organization_name}
       userInitials={initials}
       title={title}
       subtitle={subtitle}

@@ -28,7 +28,7 @@ export default function AnalysisPage({ params }: { params: { id: string } }) {
           message:
             "No approved engineering methodology is available for Shallow Foundation Bearing Capacity. " +
             "Ground Intelligence does not estimate, approximate, or substitute a methodology. Submit a " +
-            "Request/Add Methodology to begin the PIGL Engineering review process.",
+            "Request/Add Methodology to begin your organization's technical review process.",
         });
       } else {
         const m = methodologies[0];
@@ -75,8 +75,8 @@ export default function AnalysisPage({ params }: { params: { id: string } }) {
       <h3 style={{ marginTop: 0 }}>Shallow Foundation Bearing Capacity</h3>
       <div className="gate-notice">
         <strong>Governance gate:</strong> Ground Intelligence will only run this calculation using a
-        methodology that PIGL Engineering has formally approved. If none is approved, the system
-        refuses rather than estimating, approximating, or fabricating a result.
+        methodology that your organization's technical reviewer has formally approved. If none is
+        approved, the system refuses rather than estimating, approximating, or fabricating a result.
       </div>
 
       {!calcChecked && (

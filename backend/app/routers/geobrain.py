@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.authz import require_project_access
 from app.models.identity import User
 from app.models.engineering import Calculation
 from app.geobrain import tools as gb_tools
@@ -24,6 +25,7 @@ def list_tools(user: User = Depends(get_current_user)):
 
 @router.get("/tools/get_project/{project_id}")
 def tool_get_project(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, project_id)
     return gb_tools.get_project(db, project_id)
 
 
@@ -34,6 +36,7 @@ def tool_get_methodology(calculation_type: str, db: Session = Depends(get_db), u
 
 @router.get("/tools/query_map/{project_id}")
 def tool_query_map(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, project_id)
     return gb_tools.query_map(db, project_id)
 
 
@@ -47,4 +50,5 @@ def tool_run_engineering_calculation(calculation_id: str, inputs: dict, db: Sess
     calc = db.get(Calculation, calculation_id)
     if not calc:
         raise HTTPException(404, "Calculation not found")
+    require_project_access(db, user, calc.project_id)
     return gb_tools.run_engineering_calculation(db, calculation=calc, inputs=inputs, user_id=user.id)

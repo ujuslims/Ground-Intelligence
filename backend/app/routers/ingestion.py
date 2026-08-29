@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.authz import require_project_access
 from app.models.identity import User
 from app.models.files import File as FileModel, Dataset
 from app.models.geotech import CPT, CPTReading, Sample, LaboratoryResult
@@ -53,6 +54,7 @@ async def inspect_cpt_file(cpt_id: str, project_id: str, upload: UploadFile = Fa
     cpt = db.get(CPT, cpt_id)
     if not cpt:
         raise HTTPException(404, "CPT not found")
+    require_project_access(db, user, project_id)
 
     content = await upload.read()
     file_row = _store_upload(db, project_id=project_id, upload=upload, content=content, user_id=user.id)
@@ -70,6 +72,7 @@ def confirm_cpt_import(cpt_id: str, payload: ConfirmImportRequest, project_id: s
     cpt = db.get(CPT, cpt_id)
     if not cpt:
         raise HTTPException(404, "CPT not found")
+    require_project_access(db, user, project_id)
     file_row = db.get(FileModel, payload.file_id)
     if not file_row:
         raise HTTPException(404, "Uploaded file not found")
@@ -108,6 +111,7 @@ def confirm_cpt_import(cpt_id: str, payload: ConfirmImportRequest, project_id: s
 @router.post("/laboratory/import-file/inspect", response_model=InspectResponse)
 async def inspect_lab_file(project_id: str, upload: UploadFile = FastAPIFile(...),
                             db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, project_id)
     content = await upload.read()
     file_row = _store_upload(db, project_id=project_id, upload=upload, content=content, user_id=user.id)
     log_event(db, user_id=user.id, action="FILE_UPLOADED", object_type="FILE", object_id=file_row.id,
@@ -127,6 +131,7 @@ def confirm_lab_import(payload: ConfirmImportRequest, project_id: str,
     and nothing for that row is imported -- the pipeline does not silently
     create a placeholder Sample just to force an import through.
     """
+    require_project_access(db, user, project_id)
     file_row = db.get(FileModel, payload.file_id)
     if not file_row:
         raise HTTPException(404, "Uploaded file not found")

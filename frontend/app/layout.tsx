@@ -6,7 +6,7 @@ import OuterMain from "@/components/OuterMain";
 
 export const metadata: Metadata = {
   title: "Ground Intelligence",
-  description: "PIGL Ground Intelligence — subsurface and engineering intelligence platform (MVP)",
+  description: "Ground Intelligence — subsurface and engineering intelligence platform (MVP)",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

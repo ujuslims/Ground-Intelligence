@@ -41,12 +41,21 @@ from sqlalchemy.orm import Session
 from app.models.engineering import (
     Methodology, MethodologyVersion, MethodologyStatus, Calculation, CalculationVersion, CalculationStatus,
 )
+from app.models.project import Project
 from app.services.audit import log_event
+
+WRONG_ORGANIZATION_MESSAGE = (
+    "This methodology version was approved for a different organization. "
+    "Methodology approval is organization-scoped -- your own organization's "
+    "technical reviewer must approve a methodology before it can be used in "
+    "your calculations, even if another organization has already approved the "
+    "same published standard."
+)
 
 INSUFFICIENT_BASIS_MESSAGE = (
     "No approved engineering methodology is available for this calculation type. "
     "Ground Intelligence does not estimate, approximate, or substitute a methodology. "
-    "Submit a Request/Add Methodology to begin the PIGL Engineering review process."
+    "Submit a Request/Add Methodology to begin your organization's technical review process."
 )
 
 
@@ -234,6 +243,19 @@ class CalculationRunner:
                 result=None,
                 warnings=[],
                 message=INSUFFICIENT_BASIS_MESSAGE,
+            )
+
+        # Step 3 (organization scoping): an APPROVED version is only APPROVED
+        # for the organization whose technical reviewer approved it. Re-verify
+        # this independently too -- do not trust that the calculation's
+        # project and the version's organization already line up.
+        project = db.get(Project, calculation.project_id)
+        if not project or version.organization_id != project.organization_id:
+            return CalculationOutcome(
+                outcome="REFUSED_NO_APPROVED_METHODOLOGY",
+                result=None,
+                warnings=[],
+                message=WRONG_ORGANIZATION_MESSAGE,
             )
 
         # Step 4: resolve a registered implementation for this exact

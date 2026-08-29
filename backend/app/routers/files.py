@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.authz import require_project_access
 from app.models.identity import User
 from app.models.files import File, Dataset
 from app.services.audit import log_event
@@ -14,6 +15,7 @@ router = APIRouter(prefix="/api", tags=["files"])
 @router.post("/projects/{project_id}/files")
 async def upload_file(project_id: str, upload: UploadFile = FastAPIFile(...),
                        db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, project_id)
     content = await upload.read()
     storage_service = get_storage_service()
     storage_service.ensure_bucket()
@@ -42,4 +44,5 @@ def get_download_url(file_id: str, db: Session = Depends(get_db), user: User = D
     file_row = db.get(File, file_id)
     if not file_row:
         raise HTTPException(404, "File not found")
+    require_project_access(db, user, file_row.project_id)
     return {"url": get_storage_service().presigned_url(file_row.storage_key)}

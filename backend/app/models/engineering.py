@@ -58,6 +58,14 @@ class MethodologyVersion(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
     methodology_id: Mapped[str] = mapped_column(String(36), ForeignKey("methodologies.id"), nullable=False)
+    # Which organization's technical reviewer approved THIS version for THEIR
+    # OWN use. Methodology (the parent row -- name, reference, description)
+    # is shared catalog content; the approval that makes a version usable in
+    # a production calculation is organization-scoped. Two firms adopting the
+    # same published standard (e.g. Eurocode 7) each get their own
+    # MethodologyVersion row and their own independent sign-off -- one firm's
+    # approval must never silently authorize another firm's calculations.
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True)
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     specification: Mapped[str | None] = mapped_column(Text, nullable=True)
     verification_cases: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON

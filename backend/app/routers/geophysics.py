@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.authz import require_project_access, resolve_location_project_id, resolve_ves_project_id
 from app.models.identity import User
 from app.models.geophysics import VES, VESReading, VESLayer
 from app.schemas.core import VESCreate, VESOut, VESReadingIn, VESLayerCreate, VESLayerOut
@@ -13,6 +14,7 @@ router = APIRouter(prefix="/api", tags=["geophysics"])
 
 @router.post("/ves", response_model=VESOut)
 def create_ves(payload: VESCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_location_project_id(db, payload.location_id))
     ves = VES(**payload.model_dump(), created_by=user.id)
     db.add(ves)
     db.commit()
@@ -23,6 +25,7 @@ def create_ves(payload: VESCreate, db: Session = Depends(get_db), user: User = D
 
 @router.get("/locations/{location_id}/ves", response_model=list[VESOut])
 def list_ves(location_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_location_project_id(db, location_id))
     return db.query(VES).filter_by(location_id=location_id).all()
 
 
@@ -31,6 +34,7 @@ def import_ves_readings(ves_id: str, readings: list[VESReadingIn], db: Session =
     ves = db.get(VES, ves_id)
     if not ves:
         raise HTTPException(404, "VES survey not found")
+    require_project_access(db, user, resolve_location_project_id(db, ves.location_id))
     for r in readings:
         db.add(VESReading(ves_id=ves_id, electrode_spacing=r.electrode_spacing, apparent_resistivity=r.apparent_resistivity))
     ves.version += 1
@@ -42,6 +46,7 @@ def import_ves_readings(ves_id: str, readings: list[VESReadingIn], db: Session =
 
 @router.get("/ves/{ves_id}/readings")
 def get_ves_readings(ves_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_ves_project_id(db, ves_id))
     rows = db.query(VESReading).filter_by(ves_id=ves_id).order_by(VESReading.electrode_spacing).all()
     return [{"electrode_spacing": r.electrode_spacing, "apparent_resistivity": r.apparent_resistivity} for r in rows]
 
@@ -50,6 +55,7 @@ def get_ves_readings(ves_id: str, db: Session = Depends(get_db), user: User = De
 def add_ves_layer(ves_id: str, payload: VESLayerCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if payload.ves_id != ves_id:
         raise HTTPException(400, "ves_id mismatch")
+    require_project_access(db, user, resolve_ves_project_id(db, ves_id))
     layer = VESLayer(**payload.model_dump(), created_by=user.id)
     db.add(layer)
     ves = db.get(VES, ves_id)
@@ -63,4 +69,5 @@ def add_ves_layer(ves_id: str, payload: VESLayerCreate, db: Session = Depends(ge
 
 @router.get("/ves/{ves_id}/layers", response_model=list[VESLayerOut])
 def list_ves_layers(ves_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_ves_project_id(db, ves_id))
     return db.query(VESLayer).filter_by(ves_id=ves_id).order_by(VESLayer.layer_number).all()

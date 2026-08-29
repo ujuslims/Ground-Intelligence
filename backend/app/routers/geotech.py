@@ -4,6 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.authz import (
+    require_project_access, resolve_location_project_id, resolve_borehole_project_id, resolve_cpt_project_id,
+)
 from app.models.identity import User
 from app.models.geotech import (
     Borehole, BoreholeStratum, SPT, CPT, CPTReading, Sample, LaboratoryResult, GroundwaterObservation,
@@ -22,6 +25,7 @@ router = APIRouter(prefix="/api", tags=["geotech"])
 # ---- Borehole ----
 @router.post("/boreholes", response_model=BoreholeOut)
 def create_borehole(payload: BoreholeCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_location_project_id(db, payload.location_id))
     bh = Borehole(**payload.model_dump(), created_by=user.id)
     db.add(bh)
     db.commit()
@@ -32,6 +36,7 @@ def create_borehole(payload: BoreholeCreate, db: Session = Depends(get_db), user
 
 @router.get("/locations/{location_id}/boreholes", response_model=list[BoreholeOut])
 def list_boreholes(location_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_location_project_id(db, location_id))
     return db.query(Borehole).filter_by(location_id=location_id).all()
 
 
@@ -39,6 +44,7 @@ def list_boreholes(location_id: str, db: Session = Depends(get_db), user: User =
 def add_stratum(borehole_id: str, payload: StratumCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if payload.borehole_id != borehole_id:
         raise HTTPException(400, "borehole_id mismatch")
+    require_project_access(db, user, resolve_borehole_project_id(db, borehole_id))
     stratum = BoreholeStratum(**payload.model_dump(), created_by=user.id)
     db.add(stratum)
     db.commit()
@@ -49,6 +55,7 @@ def add_stratum(borehole_id: str, payload: StratumCreate, db: Session = Depends(
 
 @router.get("/boreholes/{borehole_id}/strata", response_model=list[StratumOut])
 def list_strata(borehole_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_borehole_project_id(db, borehole_id))
     return db.query(BoreholeStratum).filter_by(borehole_id=borehole_id).order_by(BoreholeStratum.depth_from).all()
 
 
@@ -58,6 +65,7 @@ def add_spt(borehole_id: str, payload: SPTCreate, db: Session = Depends(get_db),
     recorded. No energy/overburden/rod correction is applied or inferred."""
     if payload.borehole_id != borehole_id:
         raise HTTPException(400, "borehole_id mismatch")
+    require_project_access(db, user, resolve_borehole_project_id(db, borehole_id))
     spt = SPT(**payload.model_dump(), created_by=user.id)
     db.add(spt)
     db.commit()
@@ -69,6 +77,7 @@ def add_spt(borehole_id: str, payload: SPTCreate, db: Session = Depends(get_db),
 # ---- CPT ----
 @router.post("/cpts", response_model=CPTOut)
 def create_cpt(payload: CPTCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_location_project_id(db, payload.location_id))
     cpt = CPT(**payload.model_dump(), created_by=user.id)
     db.add(cpt)
     db.commit()
@@ -79,6 +88,7 @@ def create_cpt(payload: CPTCreate, db: Session = Depends(get_db), user: User = D
 
 @router.get("/locations/{location_id}/cpts", response_model=list[CPTOut])
 def list_cpts(location_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_location_project_id(db, location_id))
     return db.query(CPT).filter_by(location_id=location_id).all()
 
 
@@ -95,6 +105,7 @@ def import_cpt_readings(cpt_id: str, payload: CPTImportRequest, db: Session = De
     cpt = db.get(CPT, cpt_id)
     if not cpt:
         raise HTTPException(404, "CPT not found")
+    require_project_access(db, user, resolve_location_project_id(db, cpt.location_id))
 
     errors = validate_cpt_readings(payload.readings)
     if errors:
@@ -114,12 +125,14 @@ def import_cpt_readings(cpt_id: str, payload: CPTImportRequest, db: Session = De
 def get_cpt_readings(cpt_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Depth-ordered readings, ready for qc-vs-depth / fs-vs-depth / friction-
     ratio plotting on the frontend (Tech Spec §18)."""
+    require_project_access(db, user, resolve_cpt_project_id(db, cpt_id))
     return db.query(CPTReading).filter_by(cpt_id=cpt_id).order_by(CPTReading.depth).all()
 
 
 # ---- Groundwater ----
 @router.post("/groundwater", response_model=GroundwaterOut)
 def add_groundwater(payload: GroundwaterCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_location_project_id(db, payload.location_id))
     gw = GroundwaterObservation(**payload.model_dump(), created_by=user.id)
     db.add(gw)
     db.commit()
@@ -130,12 +143,20 @@ def add_groundwater(payload: GroundwaterCreate, db: Session = Depends(get_db), u
 
 @router.get("/locations/{location_id}/groundwater", response_model=list[GroundwaterOut])
 def list_groundwater(location_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    require_project_access(db, user, resolve_location_project_id(db, location_id))
     return db.query(GroundwaterObservation).filter_by(location_id=location_id).order_by(GroundwaterObservation.observation_date).all()
 
 
 # ---- Laboratory (Path B -- externally processed summary import, MVP priority) ----
 @router.post("/samples", response_model=SampleOut)
 def create_sample(payload: SampleCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    # Sample.borehole_id is optional (a lab sample doesn't always trace back to
+    # a borehole) -- when it IS given, enforce project membership on that
+    # borehole's project. A sample submitted with no borehole_id can't be
+    # project-scoped by this check; that's a known gap (no project_id column
+    # on Sample yet), tracked as a follow-up rather than solved here.
+    if payload.borehole_id:
+        require_project_access(db, user, resolve_borehole_project_id(db, payload.borehole_id))
     sample = Sample(**payload.model_dump(), created_by=user.id)
     db.add(sample)
     db.commit()
@@ -152,6 +173,11 @@ def add_lab_result(payload: LabResultCreate, db: Session = Depends(get_db), user
     Default status is IMPORTED (Path B) -- the system must never claim Ground
     Intelligence calculated a result it only imported (Tech Spec §22).
     """
+    sample = db.get(Sample, payload.sample_id)
+    if not sample:
+        raise HTTPException(404, "Sample not found")
+    if sample.borehole_id:
+        require_project_access(db, user, resolve_borehole_project_id(db, sample.borehole_id))
     result = LaboratoryResult(**payload.model_dump(), created_by=user.id)
     db.add(result)
     db.commit()
@@ -162,4 +188,7 @@ def add_lab_result(payload: LabResultCreate, db: Session = Depends(get_db), user
 
 @router.get("/samples/{sample_id}/laboratory-results", response_model=list[LabResultOut])
 def list_lab_results(sample_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    sample = db.get(Sample, sample_id)
+    if sample and sample.borehole_id:
+        require_project_access(db, user, resolve_borehole_project_id(db, sample.borehole_id))
     return db.query(LaboratoryResult).filter_by(sample_id=sample_id).all()

@@ -84,6 +84,7 @@ export default function AppShell({
   projectId,
   projectName,
   projectCode,
+  orgName,
   userInitials,
   title,
   subtitle,
@@ -93,6 +94,9 @@ export default function AppShell({
   projectId: string;
   projectName?: string;
   projectCode?: string;
+  // The logged-in user's own organization -- Ground Intelligence is
+  // multi-tenant, so the sidebar brand must never hardcode one firm's name.
+  orgName?: string;
   userInitials?: string;
   title: string;
   subtitle?: string;
@@ -120,7 +124,7 @@ export default function AppShell({
       <aside className="gi-sidebar">
         <div className="gi-brand">
           <div className="gi-brand-mark">Ground Intelligence</div>
-          <div className="gi-brand-sub">PIGL — MVP</div>
+          <div className="gi-brand-sub">{orgName || "—"}</div>
         </div>
         <nav className="gi-navlist">
           {NAV_ITEMS.map((item) => {

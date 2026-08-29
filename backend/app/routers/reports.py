@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.authz import require_project_access
 from app.models.identity import User
 from app.models.reporting import Report, ReportSection
 from app.services.audit import log_event
@@ -15,6 +16,7 @@ router = APIRouter(prefix="/api", tags=["reports"])
 def create_draft_summary(project_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Assembles and persists a DRAFT — ENGINEER REVIEW REQUIRED report from
     structured project data (Tech Spec §41)."""
+    require_project_access(db, user, project_id)
     summary = assemble_draft_engineering_summary(db, project_id=project_id)
     if "error" in summary:
         return summary
@@ -41,6 +43,7 @@ def get_report(report_id: str, db: Session = Depends(get_db), user: User = Depen
     report = db.get(Report, report_id)
     if not report:
         return {"error": "not_found"}
+    require_project_access(db, user, report.project_id)
     sections = db.query(ReportSection).filter_by(report_id=report_id).order_by(ReportSection.order).all()
     return {
         "id": report.id, "title": report.title, "status": report.status, "report_type": report.report_type,
