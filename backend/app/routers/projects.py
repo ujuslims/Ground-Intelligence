@@ -19,7 +19,18 @@ def list_projects(user: User = Depends(get_current_user), db: Session = Depends(
 
 @router.post("", response_model=ProjectOut)
 def create_project(payload: ProjectCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    project = Project(**payload.model_dump(), created_by=user.id)
+    data = payload.model_dump()
+    if not data.get("organization_id"):
+        # No Organization ID field on the "New project" form -- this is the
+        # normal path. Default to the creating user's own organization.
+        if not user.organization_id:
+            raise HTTPException(
+                400,
+                "Your account isn't assigned to an organization, so a project can't be created. "
+                "Ask an administrator to set your organization.",
+            )
+        data["organization_id"] = user.organization_id
+    project = Project(**data, created_by=user.id)
     db.add(project)
     db.flush()
 

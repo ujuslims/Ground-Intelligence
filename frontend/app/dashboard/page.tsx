@@ -9,7 +9,6 @@ export default function DashboardPage() {
   const router = useRouter();
   const [projects, setProjects] = useState<any[] | null>(null);
   const [name, setName] = useState("");
-  const [orgId, setOrgId] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,11 +21,13 @@ export default function DashboardPage() {
     e.preventDefault();
     setError(null);
     try {
-      const p = await api.createProject({ organization_id: orgId, name });
+      // organization_id is intentionally omitted -- the backend defaults it
+      // to the logged-in user's own organization (routers/projects.py).
+      const p = await api.createProject({ name });
       setProjects((prev) => (prev ? [...prev, p] : [p]));
       setName("");
     } catch (err) {
-      setError("Could not create project. Check the Organization ID.");
+      setError(err instanceof ApiError ? err.message : "Could not create project.");
     }
   }
 
@@ -37,10 +38,6 @@ export default function DashboardPage() {
       <div className="card">
         <h3 style={{ marginTop: 0 }}>New project</h3>
         <form onSubmit={handleCreate}>
-          <div className="field">
-            <label>Organization ID</label>
-            <input value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder="organization UUID" required />
-          </div>
           <div className="field">
             <label>Project name</label>
             <input value={name} onChange={(e) => setName(e.target.value)} required />

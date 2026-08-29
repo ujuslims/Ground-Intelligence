@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { applyTheme, getStoredTheme, GiTheme } from "@/lib/theme";
+import { api } from "@/lib/api";
 
 const NAV_ICONS: Record<string, JSX.Element> = {
   overview: (
@@ -99,6 +100,15 @@ export default function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  async function handleLogout() {
+    try {
+      await api.logout();
+    } finally {
+      router.push("/login");
+    }
+  }
 
   function isActive(key: string, href: string) {
     if (key === "overview") return pathname === href;
@@ -139,6 +149,9 @@ export default function AppShell({
           <div className="gi-topbar-right">
             {headerRight}
             <ThemeSwitch />
+            <button type="button" className="gi-logout-btn" title="Log out" onClick={handleLogout}>
+              Log out
+            </button>
             <div className="gi-avatar">{userInitials || "?"}</div>
           </div>
         </div>

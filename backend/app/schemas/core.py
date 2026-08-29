@@ -12,7 +12,11 @@ class ORMModel(BaseModel):
 
 # ---- Project ----
 class ProjectCreate(BaseModel):
-    organization_id: str
+    # Optional: almost every user belongs to exactly one organization, so the
+    # backend defaults this to the creating user's own organization_id when
+    # omitted (see routers/projects.py). Only needed if a user somehow spans
+    # more than one organization -- not a normal MVP case.
+    organization_id: str | None = None
     client_id: str | None = None
     name: str
     project_code: str | None = None
